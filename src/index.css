@@ -43,6 +43,27 @@ button {
   background: #22c55e;
 }
 
+.marker-dot--selected {
+  box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.35);
+}
+
+.marker-badge {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9999px;
+  background: #f97316;
+  color: #0f172a;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

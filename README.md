@@ -1,6 +1,6 @@
 # RunIt Pittsburgh
 
-Pickup basketball court finder for Pittsburgh, PA. Built with React + Vite, Tailwind CSS, React Router, and Mapbox.
+Pickup basketball court finder for Pittsburgh, PA. Built with React + Vite, Tailwind CSS, React Router, Leaflet, Firebase, and Framer Motion.
 
 ## Getting Started
 
@@ -32,6 +32,37 @@ VITE_FIREBASE_PROJECT_ID=your_project_id
 VITE_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
 VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
 VITE_FIREBASE_APP_ID=your_app_id
+```
+
+## Architecture Overview
+
+- `src/pages/Home.jsx`: map + split view layout, filters, and selection state
+- `src/pages/CourtDetail.jsx`: court detail logic and Firestore listeners
+- `src/components/court/*`: UI sections for court detail
+- `src/utils/*`: shared helpers and analytics logging
+- `src/constants/*`: shared constants and Firestore collection names
+
+## Testing
+
+Run unit tests:
+
+```bash
+npm run test
+```
+
+## Data Integrity (Optional)
+
+This repo includes a scheduled Cloud Function to expire stale check-ins and player requests.
+
+```bash
+cd functions
+npm install
+```
+
+Then deploy with Firebase CLI:
+
+```bash
+firebase deploy --only functions
 ```
 
 ## Notes

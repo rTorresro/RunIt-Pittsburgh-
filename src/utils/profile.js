@@ -6,10 +6,11 @@ import {
   updateDoc,
 } from 'firebase/firestore'
 import { db } from '../firebase.js'
+import { COLLECTIONS } from '../constants/firestore.js'
 
 export async function getUserProfile(uid) {
   if (!uid) return null
-  const ref = doc(db, 'users', uid)
+  const ref = doc(db, COLLECTIONS.USERS, uid)
   const snapshot = await getDoc(ref)
   return snapshot.exists() ? snapshot.data() : null
 }
@@ -22,7 +23,7 @@ export async function createUserProfile({
   preferred_position,
   photo_url,
 }) {
-  const ref = doc(db, 'users', uid)
+  const ref = doc(db, COLLECTIONS.USERS, uid)
   await setDoc(ref, {
     uid,
     email,
@@ -35,6 +36,6 @@ export async function createUserProfile({
 }
 
 export async function updateUserProfile(uid, updates) {
-  const ref = doc(db, 'users', uid)
+  const ref = doc(db, COLLECTIONS.USERS, uid)
   await updateDoc(ref, updates)
 }

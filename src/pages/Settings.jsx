@@ -68,6 +68,17 @@ function Settings() {
           <button
             type="button"
             className="flex w-full items-center justify-between rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-left text-sm text-slate-100"
+            onClick={() => navigate('/announcements')}
+          >
+            <div>
+              <p className="font-semibold">Announcements</p>
+              <p className="text-xs text-slate-400">Community updates and events.</p>
+            </div>
+            <span className="text-slate-400">Open</span>
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center justify-between rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-left text-sm text-slate-100"
             onClick={() => {
               localStorage.removeItem('runit_onboarding_seen')
               navigate('/onboarding')

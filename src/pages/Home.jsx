@@ -4,32 +4,34 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import { AnimatePresence, motion } from 'framer-motion'
 import L from 'leaflet'
 import courts from '../data/courts.js'
-import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore'
+import { collection, doc, limit, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore'
 import { db } from '../firebase.js'
 import CourtDetail from './CourtDetail.jsx'
+import { COLLECTIONS, EXPIRATION_MS } from '../constants/firestore.js'
+import CourtFilters from '../components/map/CourtFilters.jsx'
 
 const center = [40.4406, -79.9959]
 
-const activeMarkerIcon = new L.DivIcon({
-  className: 'runit-marker',
-  html: '<div class="marker-dot marker-dot--active"></div>',
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
-})
+const buildMarkerIcon = ({ isSelected, hasActive, unreadCount }) => {
+  const dotClasses = [
+    'marker-dot',
+    hasActive ? 'marker-dot--active' : '',
+    isSelected ? 'marker-dot--selected' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const badge =
+    unreadCount && unreadCount > 0
+      ? `<span class="marker-badge">${unreadCount}</span>`
+      : ''
 
-const inactiveMarkerIcon = new L.DivIcon({
-  className: 'runit-marker',
-  html: '<div class="marker-dot"></div>',
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
-})
-
-const selectedMarkerIcon = new L.DivIcon({
-  className: 'runit-marker',
-  html: '<div class="marker-dot marker-dot--selected"></div>',
-  iconSize: [22, 22],
-  iconAnchor: [11, 11],
-})
+  return new L.DivIcon({
+    className: 'runit-marker',
+    html: `<div class="${dotClasses}">${badge}</div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  })
+}
 
 const mapBounds = L.latLngBounds(
   courts.map((court) => [court.latitude, court.longitude])
@@ -46,6 +48,10 @@ function Home() {
   const [mapError, setMapError] = useState('')
   const [locationError, setLocationError] = useState('')
   const [locationEnabled, setLocationEnabled] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [filterOutdoor, setFilterOutdoor] = useState(false)
+  const [filterLights, setFilterLights] = useState(false)
+  const [unreadCounts, setUnreadCounts] = useState({})
   const [viewportHeight, setViewportHeight] = useState(() =>
     typeof window === 'undefined' ? 800 : window.innerHeight
   )
@@ -111,11 +117,9 @@ function Home() {
 
   useEffect(() => {
     const activeQuery = query(
-      collection(db, 'checkIns'),
+      collection(db, COLLECTIONS.CHECK_INS),
       where('status', '==', 'active')
     )
-
-    const expireThresholdMs = 2.5 * 60 * 60 * 1000
 
     setCheckInsLoading(true)
     const unsubscribe = onSnapshot(
@@ -127,8 +131,8 @@ function Home() {
           if (!data?.court_id) return acc
           if (data.check_in_time?.toDate) {
             const ageMs = now - data.check_in_time.toDate().getTime()
-            if (ageMs >= expireThresholdMs) {
-              updateDoc(doc(db, 'checkIns', docSnap.id), {
+            if (ageMs >= EXPIRATION_MS.CHECK_IN) {
+              updateDoc(doc(db, COLLECTIONS.CHECK_INS, docSnap.id), {
                 status: 'expired',
               })
               return acc
@@ -152,10 +156,9 @@ function Home() {
 
   useEffect(() => {
     const requestQuery = query(
-      collection(db, 'playerRequests'),
+      collection(db, COLLECTIONS.PLAYER_REQUESTS),
       where('status', '==', 'open')
     )
-    const expireThresholdMs = 60 * 60 * 1000
 
     setRequestsLoading(true)
     const unsubscribe = onSnapshot(
@@ -168,8 +171,8 @@ function Home() {
           if (!data?.court_id) return
           if (data.created_at?.toDate) {
             const ageMs = now - data.created_at.toDate().getTime()
-            if (ageMs >= expireThresholdMs) {
-              updateDoc(doc(db, 'playerRequests', docSnap.id), {
+            if (ageMs >= EXPIRATION_MS.PLAYER_REQUEST) {
+              updateDoc(doc(db, COLLECTIONS.PLAYER_REQUESTS, docSnap.id), {
                 status: 'expired',
               })
               return
@@ -192,9 +195,18 @@ function Home() {
 
   const countsByCourt = useMemo(() => checkInCounts, [checkInCounts])
   const filteredCourts = useMemo(() => {
-    if (!showOnlyRequests) return courts
-    return courts.filter((court) => activeRequestCourts.has(court.id))
-  }, [showOnlyRequests, activeRequestCourts])
+    const queryText = searchQuery.trim().toLowerCase()
+    return courts.filter((court) => {
+      if (showOnlyRequests && !activeRequestCourts.has(court.id)) return false
+      if (filterOutdoor && !court.outdoor) return false
+      if (filterLights && !court.has_lights) return false
+      if (!queryText) return true
+      return (
+        court.name.toLowerCase().includes(queryText) ||
+        court.address.toLowerCase().includes(queryText)
+      )
+    })
+  }, [showOnlyRequests, activeRequestCourts, filterOutdoor, filterLights, searchQuery])
 
   const isMobile = viewportWidth < 768
   const isTablet = viewportWidth >= 768 && viewportWidth < 1200
@@ -208,6 +220,7 @@ function Home() {
   useEffect(() => {
     if (activeCourtId) {
       setSheetY(collapsedY)
+      localStorage.setItem(`runit_last_read_${activeCourtId}`, String(Date.now()))
     }
   }, [activeCourtId, collapsedY])
 
@@ -270,6 +283,27 @@ function Home() {
     return null
   }
 
+  useEffect(() => {
+    const unsubscribers = courts.map((court) => {
+      const messagesRef = collection(db, COLLECTIONS.COURTS, court.id, 'messages')
+      const messagesQuery = query(messagesRef, orderBy('timestamp', 'desc'), limit(50))
+
+      return onSnapshot(messagesQuery, (snapshot) => {
+        const lastRead = Number(localStorage.getItem(`runit_last_read_${court.id}`) || 0)
+        const count = snapshot.docs.reduce((acc, docSnap) => {
+          const data = docSnap.data()
+          const ts = data.timestamp?.toDate?.()
+          if (!ts) return acc
+          if (ts.getTime() > lastRead) return acc + 1
+          return acc
+        }, 0)
+        setUnreadCounts((prev) => ({ ...prev, [court.id]: count }))
+      })
+    })
+
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe())
+  }, [])
+
   return (
     <div
       className="relative w-full h-[calc(100vh-4.25rem)] overflow-hidden"
@@ -279,16 +313,17 @@ function Home() {
       onTouchMove={handleResizeMove}
       onTouchEnd={handleResizeEnd}
     >
-      <div className="absolute left-4 top-4 z-[500] rounded-2xl border border-slate-800 bg-slate-950/90 p-3 text-xs text-slate-200 shadow-lg backdrop-blur">
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            className="h-4 w-4 accent-orange-500"
-            checked={showOnlyRequests}
-            onChange={() => setShowOnlyRequests((prev) => !prev)}
-          />
-          Show courts with player requests
-        </label>
+      <div className="absolute left-4 top-4 z-[500] w-64 max-w-[70vw]">
+        <CourtFilters
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          filterOutdoor={filterOutdoor}
+          filterLights={filterLights}
+          onToggleOutdoor={() => setFilterOutdoor((prev) => !prev)}
+          onToggleLights={() => setFilterLights((prev) => !prev)}
+          showOnlyRequests={showOnlyRequests}
+          onToggleRequests={() => setShowOnlyRequests((prev) => !prev)}
+        />
       </div>
       {(checkInsLoading || requestsLoading) && (
         <div className="absolute right-4 top-4 z-[500] rounded-full border border-slate-800 bg-slate-950/90 px-3 py-2 text-xs text-slate-300 shadow-lg">
@@ -396,11 +431,18 @@ function Home() {
               {filteredCourts.map((court) => {
                 const hasActive = (countsByCourt[court.id] || 0) > 0
                 const isSelected = activeCourtId === court.id
-                const icon = isSelected
-                  ? selectedMarkerIcon
-                  : hasActive
-                  ? activeMarkerIcon
-                  : inactiveMarkerIcon
+                const icon = buildMarkerIcon({
+                  isSelected,
+                  hasActive,
+                  unreadCount: unreadCounts[court.id] || 0,
+                })
+                const hasActive = (countsByCourt[court.id] || 0) > 0
+                const isSelected = activeCourtId === court.id
+                const icon = buildMarkerIcon({
+                  isSelected,
+                  hasActive,
+                  unreadCount: unreadCounts[court.id] || 0,
+                })
 
                 return (
                   <Marker
@@ -457,8 +499,20 @@ function Home() {
                     <p className="mt-2 text-sm text-slate-400">
                       Select a court to check in, join the queue, or find players.
                     </p>
+                    <div className="mt-6">
+                      <CourtFilters
+                        searchQuery={searchQuery}
+                        onSearchChange={setSearchQuery}
+                        filterOutdoor={filterOutdoor}
+                        filterLights={filterLights}
+                        onToggleOutdoor={() => setFilterOutdoor((prev) => !prev)}
+                        onToggleLights={() => setFilterLights((prev) => !prev)}
+                        showOnlyRequests={showOnlyRequests}
+                        onToggleRequests={() => setShowOnlyRequests((prev) => !prev)}
+                      />
+                    </div>
                     <div className="mt-6 grid gap-3">
-                      {courts.map((court) => (
+                      {filteredCourts.map((court) => (
                         <button
                           key={court.id}
                           type="button"

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
+import { getAuthErrorMessage } from '../utils/authErrors.js'
 
 function Signup() {
   const navigate = useNavigate()
@@ -31,7 +32,7 @@ function Signup() {
       })
       navigate('/profile/setup', { replace: true })
     } catch (err) {
-      setError(err?.message || 'Unable to create account.')
+      setError(getAuthErrorMessage(err))
     } finally {
       setSubmitting(false)
     }

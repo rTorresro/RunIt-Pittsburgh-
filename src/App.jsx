@@ -7,6 +7,7 @@ import Profile from './pages/Profile.jsx'
 import ProfileSetup from './pages/ProfileSetup.jsx'
 import Settings from './pages/Settings.jsx'
 import Onboarding from './pages/Onboarding.jsx'
+import Announcements from './pages/Announcements.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
 import BottomNav from './components/BottomNav.jsx'
 import { useAuth } from './context/AuthContext.jsx'
@@ -97,6 +98,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <Settings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/announcements"
+            element={
+              <ProtectedRoute>
+                <Announcements />
               </ProtectedRoute>
             }
           />

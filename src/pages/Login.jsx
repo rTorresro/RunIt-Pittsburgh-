@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
+import { getAuthErrorMessage } from '../utils/authErrors.js'
 
 function Login() {
   const navigate = useNavigate()
@@ -23,7 +24,7 @@ function Login() {
       await login(formState.email, formState.password)
       navigate('/', { replace: true })
     } catch (err) {
-      setError(err?.message || 'Unable to sign in.')
+      setError(getAuthErrorMessage(err))
     } finally {
       setSubmitting(false)
     }

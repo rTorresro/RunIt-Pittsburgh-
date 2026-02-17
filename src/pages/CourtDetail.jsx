@@ -18,6 +18,21 @@ import {
 } from 'firebase/firestore'
 import { db } from '../firebase.js'
 import { logAnalyticsEvent } from '../utils/analytics.js'
+import { COLLECTIONS, EXPIRATION_MS } from '../constants/firestore.js'
+import {
+  formatPosition,
+  formatQueueDuration,
+  formatRequestAge,
+  formatTimeAgo,
+  HOUR_MS,
+} from '../utils/time.js'
+import CourtAmenities from '../components/court/CourtAmenities.jsx'
+import CheckInSection from '../components/court/CheckInSection.jsx'
+import CurrentlyHereSection from '../components/court/CurrentlyHereSection.jsx'
+import QueueSection from '../components/court/QueueSection.jsx'
+import PlayerRequestsSection from '../components/court/PlayerRequestsSection.jsx'
+import RecentCallsSection from '../components/court/RecentCallsSection.jsx'
+import CourtChatSection from '../components/court/CourtChatSection.jsx'
 
 function CourtDetail({ courtId, onClose, variant = 'page' }) {
   const navigate = useNavigate()
@@ -71,16 +86,18 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     if (!currentQueueEntry) return -1
     return queueEntries.findIndex((entry) => entry.id === currentQueueEntry.id)
   }, [currentQueueEntry, queueEntries])
+  const checkedInUserIds = useMemo(
+    () => new Set(checkIns.map((entry) => entry.user_id)),
+    [checkIns]
+  )
 
   useEffect(() => {
     if (!court) return
     const activeQuery = query(
-      collection(db, 'checkIns'),
+      collection(db, COLLECTIONS.CHECK_INS),
       where('court_id', '==', court.id),
       where('status', '==', 'active')
     )
-
-    const expireThresholdMs = 2.5 * 60 * 60 * 1000
 
     setCheckInsLoading(true)
     const unsubscribe = onSnapshot(
@@ -95,8 +112,8 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
           .filter((entry) => {
             if (!entry.check_in_time?.toDate) return true
             const ageMs = now - entry.check_in_time.toDate().getTime()
-            if (ageMs >= expireThresholdMs) {
-              updateDoc(doc(db, 'checkIns', entry.id), {
+            if (ageMs >= EXPIRATION_MS.CHECK_IN) {
+              updateDoc(doc(db, COLLECTIONS.CHECK_INS, entry.id), {
                 status: 'expired',
               })
               return false
@@ -121,12 +138,11 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
   useEffect(() => {
     if (!court) return
     const requestQuery = query(
-      collection(db, 'playerRequests'),
+      collection(db, COLLECTIONS.PLAYER_REQUESTS),
       where('court_id', '==', court.id),
       where('status', '==', 'open'),
       orderBy('created_at', 'desc')
     )
-    const expireThresholdMs = 60 * 60 * 1000
 
     setRequestsLoading(true)
     const unsubscribe = onSnapshot(
@@ -141,8 +157,8 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
           .filter((entry) => {
             if (!entry.created_at?.toDate) return true
             const ageMs = now - entry.created_at.toDate().getTime()
-            if (ageMs >= expireThresholdMs) {
-              updateDoc(doc(db, 'playerRequests', entry.id), {
+            if (ageMs >= EXPIRATION_MS.PLAYER_REQUEST) {
+              updateDoc(doc(db, COLLECTIONS.PLAYER_REQUESTS, entry.id), {
                 status: 'expired',
               })
               return false
@@ -165,7 +181,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
   useEffect(() => {
     if (!court) return
     const queueQuery = query(
-      collection(db, 'queues'),
+      collection(db, COLLECTIONS.QUEUES),
       where('court_id', '==', court.id),
       where('status', '==', 'waiting'),
       orderBy('position', 'asc')
@@ -195,7 +211,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
   useEffect(() => {
     if (!court) return
     const calledQuery = query(
-      collection(db, 'queues'),
+      collection(db, COLLECTIONS.QUEUES),
       where('court_id', '==', court.id),
       where('status', '==', 'called'),
       orderBy('called_at', 'asc')
@@ -222,7 +238,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
   useEffect(() => {
     if (!court) return
     const historyQuery = query(
-      collection(db, 'queues'),
+      collection(db, COLLECTIONS.QUEUES),
       where('court_id', '==', court.id),
       orderBy('called_at', 'desc'),
       limit(5)
@@ -273,7 +289,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     const loadProfiles = async () => {
       const results = await Promise.all(
         missing.map(async (uid) => {
-          const snap = await getDoc(doc(db, 'users', uid))
+          const snap = await getDoc(doc(db, COLLECTIONS.USERS, uid))
           return { uid, data: snap.exists() ? snap.data() : null }
         })
       )
@@ -330,7 +346,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     setSubmitting(true)
     setActionError('')
     try {
-      await addDoc(collection(db, 'checkIns'), {
+      await addDoc(collection(db, COLLECTIONS.CHECK_INS), {
         user_id: user.uid,
         court_id: court.id,
         check_in_time: serverTimestamp(),
@@ -352,17 +368,17 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     setSubmitting(true)
     setActionError('')
     try {
-      await updateDoc(doc(db, 'checkIns', activeCheckIn.id), {
+      await updateDoc(doc(db, COLLECTIONS.CHECK_INS, activeCheckIn.id), {
         status: 'ended',
         check_out_time: serverTimestamp(),
       })
       if (currentQueueEntry) {
-        await updateDoc(doc(db, 'queues', currentQueueEntry.id), {
+        await updateDoc(doc(db, COLLECTIONS.QUEUES, currentQueueEntry.id), {
           status: 'removed',
         })
       }
       if (currentCalledEntry) {
-        await updateDoc(doc(db, 'queues', currentCalledEntry.id), {
+        await updateDoc(doc(db, COLLECTIONS.QUEUES, currentCalledEntry.id), {
           status: 'removed',
         })
       }
@@ -378,7 +394,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     setSubmitting(true)
     setActionError('')
     try {
-      await updateDoc(doc(db, 'checkIns', activeCheckIn.id), {
+      await updateDoc(doc(db, COLLECTIONS.CHECK_INS, activeCheckIn.id), {
         check_in_time: serverTimestamp(),
       })
     } catch (error) {
@@ -393,7 +409,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     setSubmitting(true)
     setActionError('')
     try {
-      await updateDoc(doc(db, 'checkIns', activeCheckIn.id), {
+      await updateDoc(doc(db, COLLECTIONS.CHECK_INS, activeCheckIn.id), {
         looking_for_team: !activeCheckIn.looking_for_team,
       })
     } catch (error) {
@@ -409,7 +425,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     setActionError('')
     try {
       const position = queueEntries.length + 1
-      await addDoc(collection(db, 'queues'), {
+      await addDoc(collection(db, COLLECTIONS.QUEUES), {
         court_id: court.id,
         user_id: user.uid,
         position,
@@ -432,7 +448,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     setActionError('')
     try {
       const entry = currentQueueEntry || currentCalledEntry
-      await updateDoc(doc(db, 'queues', entry.id), {
+      await updateDoc(doc(db, COLLECTIONS.QUEUES, entry.id), {
         status: 'removed',
       })
     } catch (error) {
@@ -449,7 +465,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     try {
       await runTransaction(db, async (transaction) => {
         const calledQuery = query(
-          collection(db, 'queues'),
+          collection(db, COLLECTIONS.QUEUES),
           where('court_id', '==', court.id),
           where('status', '==', 'called'),
           limit(1)
@@ -458,7 +474,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
         if (!calledSnapshot.empty) return
 
         const waitingQuery = query(
-          collection(db, 'queues'),
+          collection(db, COLLECTIONS.QUEUES),
           where('court_id', '==', court.id),
           where('status', '==', 'waiting'),
           orderBy('position', 'asc'),
@@ -485,7 +501,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     setSubmitting(true)
     setActionError('')
     try {
-      await updateDoc(doc(db, 'queues', currentCalledEntry.id), {
+      await updateDoc(doc(db, COLLECTIONS.QUEUES, currentCalledEntry.id), {
         status: 'confirmed',
         confirmed_at: serverTimestamp(),
       })
@@ -507,7 +523,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     setRequestSubmitting(true)
     setActionError('')
     try {
-      await addDoc(collection(db, 'playerRequests'), {
+      await addDoc(collection(db, COLLECTIONS.PLAYER_REQUESTS), {
         court_id: court.id,
         posted_by: user.uid,
         players_needed: Number(requestForm.players_needed),
@@ -537,7 +553,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     setRequestSubmitting(true)
     setActionError('')
     try {
-      await updateDoc(doc(db, 'playerRequests', requestId), {
+      await updateDoc(doc(db, COLLECTIONS.PLAYER_REQUESTS, requestId), {
         status: 'filled',
       })
     } catch (error) {
@@ -547,37 +563,20 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     }
   }
 
-  const formatTimeAgo = (timestamp) => {
-    if (!timestamp?.toDate) return 'just now'
-    const now = Date.now()
-    const diff = Math.max(now - timestamp.toDate().getTime(), 0)
-    const minutes = Math.floor(diff / 60000)
-    if (minutes < 1) return 'just now'
-    if (minutes < 60) return `${minutes} min ago`
-    const hours = Math.floor(minutes / 60)
-    if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
-    const days = Math.floor(hours / 24)
-    return `${days} day${days === 1 ? '' : 's'} ago`
-  }
-
-  const formatQueueDuration = (timestamp) => {
-    if (!timestamp?.toDate) return 'waiting now'
-    const diff = Math.max(now - timestamp.toDate().getTime(), 0)
-    const minutes = Math.floor(diff / 60000)
-    if (minutes < 1) return 'waiting now'
-    if (minutes < 60) return `waiting ${minutes} min`
-    const hours = Math.floor(minutes / 60)
-    return `waiting ${hours} hr`
-  }
-
-  const formatRequestAge = (timestamp) => {
-    if (!timestamp?.toDate) return 'just now'
-    const diff = Math.max(now - timestamp.toDate().getTime(), 0)
-    const minutes = Math.floor(diff / 60000)
-    if (minutes < 1) return 'just now'
-    if (minutes < 60) return `${minutes} min ago`
-    const hours = Math.floor(minutes / 60)
-    return `${hours} hr ago`
+  const handleReportRequest = async (requestId) => {
+    if (!requestId || !user || !court) return
+    try {
+      await addDoc(collection(db, COLLECTIONS.REPORTS), {
+        type: 'player_request',
+        court_id: court.id,
+        target_id: requestId,
+        reported_by: user.uid,
+        created_at: serverTimestamp(),
+      })
+      setActionError('Thanks for the report. We will review it soon.')
+    } catch (error) {
+      setActionError('Unable to submit report.')
+    }
   }
 
   const calledEntryAgeMs = useMemo(() => {
@@ -585,19 +584,19 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     return now - currentCalledEntry.called_at.toDate().getTime()
   }, [currentCalledEntry, now])
 
-  const shouldShowCalledBanner = calledEntryAgeMs > 0 && calledEntryAgeMs < 5 * 60 * 1000
+  const shouldShowCalledBanner =
+    calledEntryAgeMs > 0 && calledEntryAgeMs < EXPIRATION_MS.QUEUE_CALLED
 
   useEffect(() => {
     if (!calledEntries.length) return
-    const expirationMs = 5 * 60 * 1000
     const expired = calledEntries.find((entry) => {
       if (!entry.called_at?.toDate) return false
-      return now - entry.called_at.toDate().getTime() >= expirationMs
+      return now - entry.called_at.toDate().getTime() >= EXPIRATION_MS.QUEUE_CALLED
     })
     if (!expired) return
 
     const expireAndCallNext = async () => {
-      await updateDoc(doc(db, 'queues', expired.id), {
+      await updateDoc(doc(db, COLLECTIONS.QUEUES, expired.id), {
         status: 'removed',
       })
       await handleCallNext()
@@ -606,23 +605,14 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
     expireAndCallNext()
   }, [calledEntries, now])
 
-  const formatPosition = (index) => {
-    const position = index + 1
-    if (position % 10 === 1 && position % 100 !== 11) return `${position}st`
-    if (position % 10 === 2 && position % 100 !== 12) return `${position}nd`
-    if (position % 10 === 3 && position % 100 !== 13) return `${position}rd`
-    return `${position}th`
-  }
-
   const activeCheckInAgeMs = useMemo(() => {
     if (!activeCheckIn?.check_in_time?.toDate) return 0
     return now - activeCheckIn.check_in_time.toDate().getTime()
   }, [activeCheckIn, now])
 
-  const shouldShowExtend = activeCheckInAgeMs >= 2 * 60 * 60 * 1000
+  const shouldShowExtend = activeCheckInAgeMs >= 2 * HOUR_MS
   const shouldShowExpiryBanner =
-    activeCheckInAgeMs >= 2.25 * 60 * 60 * 1000 &&
-    activeCheckInAgeMs < 2.5 * 60 * 60 * 1000
+    activeCheckInAgeMs >= 2.25 * HOUR_MS && activeCheckInAgeMs < EXPIRATION_MS.CHECK_IN
 
   if (!court) {
     return (
@@ -699,26 +689,7 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
             <p className="text-sm text-slate-400">{court.address}</p>
           </div>
 
-          <div className="mt-6 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Type</p>
-              <p className="mt-2 text-base font-semibold text-slate-100">
-                {court.outdoor ? 'Outdoor' : 'Indoor'}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Hoops</p>
-              <p className="mt-2 text-base font-semibold text-slate-100">
-                {court.num_hoops} hoops
-              </p>
-            </div>
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Lights</p>
-              <p className="mt-2 text-base font-semibold text-slate-100">
-                {court.has_lights ? 'Lights available' : 'No lights'}
-              </p>
-            </div>
-          </div>
+          <CourtAmenities court={court} />
 
           <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
             <p className="text-xs uppercase tracking-wide text-slate-400">Court info</p>
@@ -729,403 +700,82 @@ function CourtDetail({ courtId, onClose, variant = 'page' }) {
             </ul>
           </div>
 
-          <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-            <p className="text-xs uppercase tracking-wide text-slate-400">Check-in</p>
-            <div className="mt-3">
-              {activeCheckIn ? (
-                <div className="space-y-3">
-                  {shouldShowExpiryBanner && (
-                    <div className="rounded-xl border border-orange-500/40 bg-orange-500/10 px-4 py-3 text-xs text-orange-200">
-                      Your check-in expires in about 15 minutes.
-                    </div>
-                  )}
-                  {currentCalledEntry && shouldShowCalledBanner && (
-                    <div className="rounded-xl border border-blue-500/40 bg-blue-500/10 px-4 py-3 text-xs text-blue-200">
-                      You&apos;re up! Head to the court.
-                    </div>
-                  )}
-                  <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-                    You&apos;re checked in.
-                  </div>
-                  {currentCalledEntry && (
-                    <button
-                      type="button"
-                      className="w-full rounded-xl bg-blue-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-blue-400"
-                      onClick={handleConfirmPlaying}
-                      disabled={submitting}
-                    >
-                      {submitting ? 'Confirming...' : "Confirm - I'm Playing"}
-                    </button>
-                  )}
-                  {shouldShowExtend && (
-                    <button
-                      type="button"
-                      className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-orange-400"
-                      onClick={handleExtend}
-                      disabled={submitting}
-                    >
-                      {submitting ? 'Extending...' : 'Extend Check-In'}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="w-full rounded-xl border border-slate-700 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:border-orange-400 hover:text-orange-300"
-                    onClick={handleCheckOut}
-                    disabled={submitting}
-                  >
-                    {submitting ? 'Checking out...' : 'Check Out'}
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:border-orange-400 hover:text-orange-300"
-                    onClick={handleLookingForTeamToggle}
-                    disabled={submitting}
-                  >
-                    {activeCheckIn.looking_for_team
-                      ? 'Looking for players: On'
-                      : 'Looking for players: Off'}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-orange-400"
-                  onClick={handleCheckIn}
-                  disabled={submitting}
-                >
-                  {submitting ? 'Checking in...' : 'Check In Here'}
-                </button>
-              )}
-            </div>
-          </div>
+          <CheckInSection
+            activeCheckIn={activeCheckIn}
+            shouldShowExpiryBanner={shouldShowExpiryBanner}
+            currentCalledEntry={currentCalledEntry}
+            shouldShowCalledBanner={shouldShowCalledBanner}
+            shouldShowExtend={shouldShowExtend}
+            submitting={submitting}
+            onConfirmPlaying={handleConfirmPlaying}
+            onExtend={handleExtend}
+            onCheckOut={handleCheckOut}
+            onCheckIn={handleCheckIn}
+            onToggleLooking={handleLookingForTeamToggle}
+          />
 
-          <div className="mt-6">
-            <div className="flex items-center justify-between">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Currently here</p>
-              <p className="text-xs text-slate-500">{checkIns.length} player(s)</p>
-            </div>
-            <div className="mt-3 space-y-3">
-              {checkInsLoading ? (
-                <div className="space-y-3 animate-pulse">
-                  <div className="h-16 rounded-2xl bg-slate-800/60" />
-                  <div className="h-16 rounded-2xl bg-slate-800/60" />
-                </div>
-              ) : checkIns.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
-                  No one has checked in yet.
-                </div>
-              ) : (
-                checkIns.map((entry) => {
-                  const entryProfile =
-                    profilesById[entry.user_id] ||
-                    (entry.user_id === user?.uid ? profile : null)
-                  const displayName =
-                    entryProfile?.name || entryProfile?.displayName || 'Hooper'
-                  const skillLevel = entryProfile?.skill_level || 'Not set'
+          <CurrentlyHereSection
+            checkIns={checkIns}
+            loading={checkInsLoading}
+            profilesById={profilesById}
+            user={user}
+            profile={profile}
+            formatTimeAgo={formatTimeAgo}
+            now={now}
+          />
 
-                  return (
-                    <div
-                      key={entry.id}
-                      className="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-3"
-                    >
-                      <div className="h-12 w-12 overflow-hidden rounded-full border border-slate-800 bg-slate-900">
-                        {entryProfile?.photo_url ? (
-                          <img
-                            src={entryProfile.photo_url}
-                            alt={displayName}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-orange-400">
-                            {displayName[0]}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-slate-100">{displayName}</p>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-xs text-slate-400">{skillLevel}</p>
-                          {entry.looking_for_team && (
-                            <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
-                              Looking for players
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        {formatTimeAgo(entry.check_in_time)}
-                      </p>
-                    </div>
-                  )
-                })
-              )}
-            </div>
-          </div>
+          <QueueSection
+            queueEntries={queueEntries}
+            loading={queueLoading}
+            activeCheckIn={activeCheckIn}
+            currentQueueEntry={currentQueueEntry}
+            currentCalledEntry={currentCalledEntry}
+            currentQueueIndex={currentQueueIndex}
+            profilesById={profilesById}
+            user={user}
+            profile={profile}
+            calledEntriesCount={calledEntries.length}
+            submitting={submitting}
+            formatPosition={formatPosition}
+            formatQueueDuration={formatQueueDuration}
+            now={now}
+            onCallNext={handleCallNext}
+            onJoinQueue={handleJoinQueue}
+            onLeaveQueue={handleLeaveQueue}
+          />
 
-          <div className="mt-6">
-            <div className="flex items-center justify-between">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Who has next</p>
-              <p className="text-xs text-slate-500">{queueEntries.length} waiting</p>
-            </div>
+          <PlayerRequestsSection
+            playerRequests={playerRequests}
+            loading={requestsLoading}
+            requestForm={requestForm}
+            requestSubmitting={requestSubmitting}
+            activeCheckIn={activeCheckIn}
+            profilesById={profilesById}
+            user={user}
+            profile={profile}
+            courtName={court.name}
+            formatRequestAge={formatRequestAge}
+            now={now}
+            onRequestChange={handleRequestChange}
+            onSubmitRequest={handleSubmitRequest}
+            onMarkFilled={handleMarkRequestFilled}
+            onReportRequest={handleReportRequest}
+          />
 
-            <div className="mt-3 space-y-3">
-              {queueLoading ? (
-                <div className="space-y-3 animate-pulse">
-                  <div className="h-14 rounded-2xl bg-slate-800/60" />
-                  <div className="h-14 rounded-2xl bg-slate-800/60" />
-                </div>
-              ) : queueEntries.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
-                  The queue is empty.
-                </div>
-              ) : (
-                queueEntries.map((entry, index) => {
-                  const entryProfile =
-                    profilesById[entry.user_id] ||
-                    (entry.user_id === user?.uid ? profile : null)
-                  const displayName =
-                    entryProfile?.name || entryProfile?.displayName || 'Hooper'
-                  const badgeLabel = index === 0 ? 'Next Up' : index === 1 ? 'On Deck' : null
+          <CourtChatSection
+            courtId={court.id}
+            courtName={court.name}
+            user={user}
+            profile={profile}
+            checkedInUserIds={checkedInUserIds}
+          />
 
-                  return (
-                    <div
-                      key={entry.id}
-                      className="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-3"
-                    >
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-800 bg-slate-900 text-xs font-semibold text-slate-200">
-                        {formatPosition(index)}
-                      </div>
-                      <div className="h-10 w-10 overflow-hidden rounded-full border border-slate-800 bg-slate-900">
-                        {entryProfile?.photo_url ? (
-                          <img
-                            src={entryProfile.photo_url}
-                            alt={displayName}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-xs font-semibold text-orange-400">
-                            {displayName[0]}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold text-slate-100">{displayName}</p>
-                          {badgeLabel && (
-                            <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300">
-                              {badgeLabel}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-400">
-                          {formatQueueDuration(entry.joined_at)}
-                        </p>
-                      </div>
-                    </div>
-                  )
-                })
-              )}
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {activeCheckIn && (
-                <button
-                  type="button"
-                  className="w-full rounded-xl border border-slate-700 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:border-orange-400 hover:text-orange-300 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500"
-                  onClick={handleCallNext}
-                  disabled={submitting || queueEntries.length === 0 || calledEntries.length > 0}
-                >
-                  {queueEntries.length === 0
-                    ? 'Queue is empty'
-                    : calledEntries.length > 0
-                    ? 'Next player already called'
-                    : 'Call Next'}
-                </button>
-              )}
-              {currentQueueEntry ? (
-                <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-                  You&apos;re {currentQueueIndex >= 0 ? formatPosition(currentQueueIndex) : 'in line'}.
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
-                  onClick={handleJoinQueue}
-                  disabled={!activeCheckIn || submitting || currentCalledEntry}
-                >
-                  {activeCheckIn ? 'Join Queue' : 'Check in to join'}
-                </button>
-              )}
-
-              {(currentQueueEntry || currentCalledEntry) && (
-                <button
-                  type="button"
-                  className="w-full rounded-xl border border-slate-700 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:border-orange-400 hover:text-orange-300"
-                  onClick={handleLeaveQueue}
-                  disabled={submitting}
-                >
-                  {submitting ? 'Leaving...' : 'Leave Queue'}
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-            <div className="flex items-center justify-between">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Need players</p>
-              <p className="text-xs text-slate-500">{playerRequests.length} open</p>
-            </div>
-
-            {!activeCheckIn && (
-              <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-950/40 p-3 text-xs text-slate-400">
-                Check in to post a player request.
-              </div>
-            )}
-            <form className="mt-4 space-y-3" onSubmit={handleSubmitRequest}>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="text-xs text-slate-300">
-                  Players needed
-                  <input
-                    type="number"
-                    min="1"
-                    name="players_needed"
-                    value={requestForm.players_needed}
-                    onChange={handleRequestChange}
-                    className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-orange-500"
-                    placeholder="2"
-                    required
-                  />
-                </label>
-                <label className="text-xs text-slate-300">
-                  Skill preference
-                  <select
-                    name="skill_level_pref"
-                    value={requestForm.skill_level_pref}
-                    onChange={handleRequestChange}
-                    className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-orange-500"
-                  >
-                    <option value="">Any</option>
-                    <option value="Beginner">Beginner</option>
-                    <option value="Intermediate">Intermediate</option>
-                    <option value="Advanced">Advanced</option>
-                  </select>
-                </label>
-              </div>
-              <label className="text-xs text-slate-300">
-                Time
-                <select
-                  name="time"
-                  value={requestForm.time}
-                  onChange={handleRequestChange}
-                  className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-orange-500"
-                >
-                  <option value="Now">Now</option>
-                  <option value="15 min">15 min</option>
-                  <option value="30 min">30 min</option>
-                  <option value="1 hour">1 hour</option>
-                </select>
-              </label>
-              <button
-                type="submit"
-                className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
-                disabled={requestSubmitting || !activeCheckIn}
-              >
-                {requestSubmitting ? 'Posting...' : 'Post Request'}
-              </button>
-            </form>
-
-            <div className="mt-4 space-y-3">
-              {requestsLoading ? (
-                <div className="space-y-3 animate-pulse">
-                  <div className="h-20 rounded-2xl bg-slate-800/60" />
-                  <div className="h-20 rounded-2xl bg-slate-800/60" />
-                </div>
-              ) : playerRequests.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
-                  No active requests yet.
-                </div>
-              ) : (
-                playerRequests.map((request) => {
-                  const requestProfile =
-                    profilesById[request.posted_by] ||
-                    (request.posted_by === user?.uid ? profile : null)
-                  const displayName =
-                    requestProfile?.name || requestProfile?.displayName || 'Hooper'
-                  const contactEmail = requestProfile?.email || user?.email || ''
-
-                  return (
-                    <div
-                      key={request.id}
-                      className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4"
-                    >
-                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-100">
-                            Need {request.players_needed} player(s)
-                          </p>
-                          <p className="text-xs text-slate-400">
-                            Skill: {request.skill_level_pref || 'Any'} · Time: {request.time}
-                          </p>
-                          <p className="mt-2 text-xs text-slate-500">
-                            Posted by {displayName} · {formatRequestAge(request.created_at)}
-                          </p>
-                          {contactEmail && (
-                            <p className="mt-1 text-xs text-slate-400">Contact: {contactEmail}</p>
-                          )}
-                        </div>
-                        <div className="flex flex-col gap-2">
-                          {contactEmail && (
-                            <a
-                              href={`mailto:${contactEmail}?subject=RunIt%20Pittsburgh%20Run%20at%20${encodeURIComponent(
-                                court.name
-                              )}`}
-                              className="rounded-xl bg-blue-500 px-3 py-2 text-center text-xs font-semibold text-slate-950 transition hover:bg-blue-400"
-                            >
-                              Join This Run
-                            </a>
-                          )}
-                          {request.posted_by === user?.uid && (
-                            <button
-                              type="button"
-                              className="rounded-xl border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-100 transition hover:border-orange-400 hover:text-orange-300"
-                              onClick={() => handleMarkRequestFilled(request.id)}
-                              disabled={requestSubmitting}
-                            >
-                              {requestSubmitting ? 'Updating...' : 'Mark Filled'}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })
-              )}
-            </div>
-          </div>
-
-          {queueHistory.length > 0 && (
-            <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Recent calls</p>
-              <div className="mt-3 space-y-2">
-                {queueHistory.map((entry) => {
-                  const entryProfile =
-                    profilesById[entry.user_id] ||
-                    (entry.user_id === user?.uid ? profile : null)
-                  const displayName =
-                    entryProfile?.name || entryProfile?.displayName || 'Hooper'
-
-                  return (
-                    <div key={entry.id} className="flex items-center justify-between text-sm text-slate-200">
-                      <span>{displayName}</span>
-                      <span className="text-xs text-slate-500">
-                        {entry.status === 'confirmed' ? 'confirmed' : 'called'}
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+          <RecentCallsSection
+            queueHistory={queueHistory}
+            profilesById={profilesById}
+            user={user}
+            profile={profile}
+          />
         </div>
       </div>
     </div>
