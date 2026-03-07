@@ -4,10 +4,10 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import { AnimatePresence, motion } from 'framer-motion'
 import L from 'leaflet'
 import courts from '../data/courts.js'
-import { collection, doc, limit, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore'
+import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore'
 import { db } from '../firebase.js'
 import CourtDetail from './CourtDetail.jsx'
-import { COLLECTIONS, EXPIRATION_MS } from '../constants/firestore.js'
+import { COLLECTIONS } from '../constants/firestore.js'
 import CourtFilters from '../components/map/CourtFilters.jsx'
 
 const center = [40.4406, -79.9959]
@@ -125,19 +125,9 @@ function Home() {
     const unsubscribe = onSnapshot(
       activeQuery,
       (snapshot) => {
-        const now = Date.now()
         const counts = snapshot.docs.reduce((acc, docSnap) => {
           const data = docSnap.data()
           if (!data?.court_id) return acc
-          if (data.check_in_time?.toDate) {
-            const ageMs = now - data.check_in_time.toDate().getTime()
-            if (ageMs >= EXPIRATION_MS.CHECK_IN) {
-              updateDoc(doc(db, COLLECTIONS.CHECK_INS, docSnap.id), {
-                status: 'expired',
-              })
-              return acc
-            }
-          }
           acc[data.court_id] = (acc[data.court_id] || 0) + 1
           return acc
         }, {})
@@ -164,20 +154,10 @@ function Home() {
     const unsubscribe = onSnapshot(
       requestQuery,
       (snapshot) => {
-        const now = Date.now()
         const activeCourts = new Set()
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data()
           if (!data?.court_id) return
-          if (data.created_at?.toDate) {
-            const ageMs = now - data.created_at.toDate().getTime()
-            if (ageMs >= EXPIRATION_MS.PLAYER_REQUEST) {
-              updateDoc(doc(db, COLLECTIONS.PLAYER_REQUESTS, docSnap.id), {
-                status: 'expired',
-              })
-              return
-            }
-          }
           activeCourts.add(data.court_id)
         })
         setActiveRequestCourts(activeCourts)
@@ -354,11 +334,11 @@ function Home() {
             {filteredCourts.map((court) => {
               const hasActive = (countsByCourt[court.id] || 0) > 0
               const isSelected = activeCourtId === court.id
-              const icon = isSelected
-                ? selectedMarkerIcon
-                : hasActive
-                ? activeMarkerIcon
-                : inactiveMarkerIcon
+              const icon = buildMarkerIcon({
+                isSelected,
+                hasActive,
+                unreadCount: unreadCounts[court.id] || 0,
+              })
 
               return (
                 <Marker
@@ -429,13 +409,6 @@ function Home() {
               <MapController />
 
               {filteredCourts.map((court) => {
-                const hasActive = (countsByCourt[court.id] || 0) > 0
-                const isSelected = activeCourtId === court.id
-                const icon = buildMarkerIcon({
-                  isSelected,
-                  hasActive,
-                  unreadCount: unreadCounts[court.id] || 0,
-                })
                 const hasActive = (countsByCourt[court.id] || 0) > 0
                 const isSelected = activeCourtId === court.id
                 const icon = buildMarkerIcon({
